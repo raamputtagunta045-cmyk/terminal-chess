@@ -597,6 +597,18 @@ class TestEngine:
         Engine(depth=3, time_limit=2.0).choose(board)
         assert board.fen() == before
 
+    def test_timed_out_search_does_not_corrupt_the_board(self):
+        """TimeUp unwinds the recursion; every made move must still be undone.
+
+        If a frame is abandoned between make() and unmake(), the board is left
+        several plies deep and the CLI appears to play moves nobody entered.
+        """
+        board = Board.from_fen(
+            "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4")
+        before = board.fen()
+        Engine(depth=99, time_limit=0.05).choose(board)
+        assert board.fen() == before
+
     def test_deeper_search_reaches_greater_depth(self):
         board = Board()
         _, _, shallow = Engine(depth=2, time_limit=5.0).choose(board)
