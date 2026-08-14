@@ -502,8 +502,12 @@ class Engine:
                               board.white_to_move):
                 board.unmake(undo)
                 continue
-            score = -self.quiesce(board, -beta, -alpha)
-            board.unmake(undo)
+            try:
+                score = -self.quiesce(board, -beta, -alpha)
+            finally:
+                # TimeUp unwinds through here; the move must come off the
+                # board either way or the caller inherits a corrupt position.
+                board.unmake(undo)
             if score >= beta:
                 return beta
             alpha = max(alpha, score)
@@ -524,8 +528,10 @@ class Engine:
 
         for mv in self._order(board, moves):
             undo = board.make(mv)
-            score = -self.negamax(board, depth - 1, -beta, -alpha, ply + 1)
-            board.unmake(undo)
+            try:
+                score = -self.negamax(board, depth - 1, -beta, -alpha, ply + 1)
+            finally:
+                board.unmake(undo)
             if score >= beta:
                 return beta
             alpha = max(alpha, score)
@@ -547,8 +553,11 @@ class Engine:
                 alpha, results = -MATE * 2, []
                 for mv in self._order(board, root, best_first=best):
                     undo = board.make(mv)
-                    score = -self.negamax(board, depth - 1, -MATE * 2, -alpha, 1)
-                    board.unmake(undo)
+                    try:
+                        score = -self.negamax(board, depth - 1,
+                                              -MATE * 2, -alpha, 1)
+                    finally:
+                        board.unmake(undo)
                     results.append((mv, score))
                     if score > alpha:
                         alpha = score
