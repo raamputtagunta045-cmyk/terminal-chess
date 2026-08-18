@@ -173,3 +173,29 @@ edge, which is precisely what makes a transposition entry worth storing.
 NPS falls from 109,601 to 97,519 because hashing and table probing are real work
 per node. That is the right trade: the search visits 58% fewer nodes, so total
 time still drops by more than half.
+
+## Phase 4 (in progress) -- delta pruning in quiescence
+
+Quiescence was 61.7% of all nodes, so it was the largest remaining target.
+Delta pruning skips a capture when even winning the victim outright, plus a
+200cp margin, cannot reach alpha. Disabled below 1300cp of non-pawn material,
+where a single pawn can decide the game and the assumption stops holding.
+
+| position | nodes (phase 3) | nodes (now) | change |
+|---|---|---|---|
+| startpos | 35,745 | 35,696 | -0.1% |
+| italian | 178,147 | 167,797 | -5.8% |
+| kiwipete | 41,089 | 24,632 | **-40.1%** |
+| promotion | 10,189 | 7,509 | **-26.3%** |
+| endgame | 56,329 | 56,280 | -0.1% |
+| **TOTAL** | **321,499** | **291,914** | **-9.2%** |
+
+Wall-clock 3.30s -> 2.99s. Quiescence share 61.7% -> 57.8%. Best move
+unchanged in every position.
+
+The gain is concentrated exactly where it should be: kiwipete and promotion are
+the tactical positions full of captures that go nowhere. The quiet positions
+(startpos, endgame) barely move, and the endgame is largely excluded by the
+material floor by design.
+
+**Cumulative so far: 769,992 -> 291,914 nodes (-62.1%), 14.23s -> 2.99s (4.76x).**

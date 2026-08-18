@@ -36,6 +36,16 @@ MATE_BOUND = MATE - 1000
 # sharp position can still grow it without limit, so it is capped.
 MAX_TT_ENTRIES = 1 << 20
 
+# Delta pruning: how far short of alpha a capture may fall and still be
+# searched. Generous enough to cover a follow-up tactic the static evaluation
+# cannot see; tight enough to discard obviously hopeless captures.
+DELTA_MARGIN = 200
+
+# Delta pruning is switched off once material is this low. In a bare endgame a
+# single pawn is often the whole game, so the assumption that a capture falling
+# short of alpha is irrelevant stops holding.
+DELTA_ENDGAME_FLOOR = 1300
+
 
 class Engine:
     """Fail-soft alpha-beta.
@@ -158,7 +168,21 @@ class Engine:
 
         captures = [m for m in movegen.pseudo_moves(board)
                     if board.squares[m[1]] != '.' or m[2]]
+        # Delta pruning is unsound in a bare endgame, where a single pawn can
+        # decide the game, so it is only applied while material remains.
+        prune = board.heavy >= DELTA_ENDGAME_FLOOR
+        squares = board.squares
+
         for mv in self._order(board, captures):
+            if prune:
+                # Best case for this capture: win the victim outright, plus the
+                # upgrade if it is also a promotion. If even that cannot reach
+                # alpha, searching it is wasted work.
+                gain = CHAR_VALUE[squares[mv[1]]]
+                if mv[2]:
+                    gain += VALUES[mv[2]] - VALUES['P']
+                if stand + gain + DELTA_MARGIN < alpha:
+                    continue
             undo = board.make(mv)
             if movegen.attacked(board, board.king_sq(not board.white_to_move),
                                 board.white_to_move):
