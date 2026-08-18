@@ -17,6 +17,7 @@ import time
 from . import movegen
 from .constants import CHAR_VALUE, MATE
 from .evaluate import ENDGAME_MATERIAL, VALUES, evaluate
+from .notation import move_to_san
 
 
 class TimeUp(Exception):
@@ -61,6 +62,19 @@ MAX_PLY = 128
 # more dilutes the signal.
 KILLERS_PER_PLY = 2
 
+# Null-move pruning. Only above this depth (below it the saving is
+# smaller than the extra search) and only with this much material left,
+# since a free pass flatters a zugzwang-prone endgame badly.
+NULL_MIN_DEPTH = 3
+NULL_REDUCTION = 2
+NULL_MATERIAL_FLOOR = ENDGAME_MATERIAL
+
+# Late move reductions. Ordering means moves this far down the list are
+# rarely best, so they are searched shallower first and re-searched at
+# full depth only if they surprise us by beating alpha.
+LMR_MIN_DEPTH = 3
+LMR_MIN_MOVES = 4
+
 
 class Engine:
     """Fail-soft alpha-beta.
@@ -88,7 +102,9 @@ class Engine:
         self.depth_stats = []           # per-iteration (depth, nodes, secs, score)
         self.tt_probes = 0
         self.tt_hits = 0
-        self.repetitions = 0            # nodes scored as a draw by repetition
+        self.repetitions = 0            # nodes scored a draw by repetition
+        self.null_cutoffs = 0           # nodes pruned by the null-move test
+        self.researches = 0             # reduced moves needing a re-search
         self.pv = []                    # principal variation, in SAN
 
         # Killer moves per ply, and a from/to table of how often a quiet move
@@ -280,6 +296,17 @@ class Engine:
         if depth <= 0:
             return self.quiesce(board, alpha, beta)
 
+        # Mate-distance pruning: a mate found at this ply cannot be
+        # bettered by anything deeper, so shrink the window to what is
+        # still achievable. Beyond the small saving, this stops the
+        # search chasing longer mates once a shorter one is proven.
+        if alpha < -MATE + ply:
+            alpha = -MATE + ply
+        if beta > MATE - ply - 1:
+            beta = MATE - ply - 1
+        if alpha >= beta:
+            return alpha
+
         alpha_orig = alpha
         key = board.hash
         tt_move = None
@@ -300,23 +327,51 @@ class Engine:
                     self.tt_hits += 1
                     return score
 
+        in_check = board.in_check(board.white_to_move)
+
+        if (depth >= NULL_MIN_DEPTH and not in_check
+                and board.heavy >= NULL_MATERIAL_FLOOR):
+            undo = board.make_null()
+            try:
+                score = -self.negamax(board, depth - 1 - NULL_REDUCTION,
+                                      -beta, -beta + 1, ply + 1)
+            finally:
+                board.unmake_null(undo)
+            if score >= beta:
+                self.null_cutoffs += 1
+                return score
+
         moves = movegen.legal_moves(board)
         if not moves:
             # Mate is scored by distance from the root, so the search prefers
             # the quicker mate and delays being mated as long as possible.
-            if board.in_check(board.white_to_move):
-                return -MATE + ply
-            return 0
+            return -MATE + ply if in_check else 0
 
         best = -MATE * 2
         best_move = None
         self.path.append(key)
         try:
-            for mv in self._order(board, moves, best_first=tt_move, ply=ply):
+            for index, mv in enumerate(
+                    self._order(board, moves, best_first=tt_move, ply=ply)):
+                # Reduce quiet moves that ordering already judged unlikely.
+                # If the shallow search beats alpha the judgement was
+                # wrong, so the move is re-searched at full depth: the
+                # reduction is a bet on the ordering, not a claim about
+                # the move itself.
+                reduce_by = 0
+                if (depth >= LMR_MIN_DEPTH and index >= LMR_MIN_MOVES
+                        and not in_check
+                        and board.squares[mv[1]] == '.' and not mv[2]):
+                    reduce_by = 1
+
                 undo = board.make(mv)
                 try:
-                    score = -self.negamax(board, depth - 1, -beta, -alpha,
-                                          ply + 1)
+                    score = -self.negamax(board, depth - 1 - reduce_by,
+                                          -beta, -alpha, ply + 1)
+                    if reduce_by and score > alpha:
+                        self.researches += 1
+                        score = -self.negamax(board, depth - 1, -beta,
+                                              -alpha, ply + 1)
                 finally:
                     board.unmake(undo)
                 if score > best:
@@ -341,6 +396,34 @@ class Engine:
             # would make an unrelated later line look like a repetition.
             self.path.pop()
 
+    def extract_pv(self, board, first_move, limit=12):
+        """Recover the principal variation by walking the table.
+
+        Each position's entry records the move that was best for it, so
+        following those from the root replays the line the engine actually
+        expects. A visited set guards against a repetition looping forever.
+        """
+        pv = []
+        undos = []
+        seen = set()
+        mv = first_move
+        try:
+            while mv and len(pv) < limit:
+                legal = movegen.legal_moves(board)
+                if mv not in legal:
+                    break
+                pv.append(move_to_san(board, mv, legal))
+                undos.append(board.make(mv))
+                if board.hash in seen:
+                    break
+                seen.add(board.hash)
+                entry = self.tt.get(board.hash)
+                mv = entry[3] if entry else None
+        finally:
+            while undos:
+                board.unmake(undos.pop())
+        return pv
+
     def choose(self, board, history=None):
         """Iterative deepening; returns (move, score, depth_reached).
 
@@ -357,6 +440,7 @@ class Engine:
         self.nodes = 0
         self.qnodes = self.evals = self.cutoffs = 0
         self.tt_probes = self.tt_hits = self.repetitions = 0
+        self.null_cutoffs = self.researches = 0
         self.killers = [[None] * KILLERS_PER_PLY for _ in range(MAX_PLY)]
         self.history = {}
         self.pv = []
@@ -403,6 +487,8 @@ class Engine:
                 # Keep the best move from the last *completed* iteration; a
                 # partial one has searched only some of the root moves.
                 break
+
+        self.pv = self.extract_pv(board, best) if best else []
 
         if self.blunder:
             # Weaker levels pick randomly among moves within a centipawn slack

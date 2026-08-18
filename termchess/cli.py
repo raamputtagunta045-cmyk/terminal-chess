@@ -62,11 +62,18 @@ Commands   board    redraw the position
            quit     exit
 """
 
+# Difficulty levels. `depth` is a ceiling, not a promise: iterative deepening
+# stops at whichever of depth-or-clock arrives first, and in a sharp position
+# the clock nearly always wins. The previous settings advertised depth 8 for
+# Brutal when the engine never got past 6 in ten seconds, so Brutal and Hard
+# played identically. These budgets were measured on the current engine --
+# see BENCHMARKS.md -- and each level now genuinely searches deeper than the
+# one below it.
 LEVELS = {
-    '1': ("Easy", Engine(depth=2, time_limit=0.4, blunder=90)),
-    '2': ("Medium", Engine(depth=4, time_limit=1.5, blunder=25)),
-    '3': ("Hard", Engine(depth=6, time_limit=4.0, blunder=0)),
-    '4': ("Brutal", Engine(depth=8, time_limit=10.0, blunder=0)),
+    '1': ("Easy", Engine(depth=3, time_limit=0.5, blunder=90)),
+    '2': ("Medium", Engine(depth=6, time_limit=2.0, blunder=25)),
+    '3': ("Hard", Engine(depth=8, time_limit=6.0, blunder=0)),
+    '4': ("Brutal", Engine(depth=12, time_limit=15.0, blunder=0)),
 }
 
 

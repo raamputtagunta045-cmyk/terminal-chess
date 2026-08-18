@@ -252,3 +252,42 @@ the terms above and the benefit largely overlaps the piece-square tables, which
 already reward pieces on squares from which they have scope.
 
 **Cumulative: 769,992 -> 266,326 nodes (-65.4%), 14.23s -> 3.90s (3.65x).**
+
+## Phase 4 (complete) -- search improvements
+
+Null-move pruning, late move reductions, mate-distance pruning, killer moves,
+the history heuristic, and principal-variation extraction. Saved as
+`bench-phase4b.json`.
+
+| position | depth | nodes (phase 5) | nodes (now) | ebf before | ebf now |
+|---|---|---|---|---|---|
+| startpos | 5 | 266,326 total | 7,372 | 12.30 | **4.85** |
+| italian | 5 | | 31,220 | 8.46 | **2.62** |
+| kiwipete | 4 | | 22,374 | 4.30 | 2.05 |
+| promotion | 4 | | 5,696 | 2.18 | 1.40 |
+| endgame | 6 | | 15,698 | 5.73 | 4.12 |
+| **TOTAL** | | **266,326** | **82,360** | | |
+
+Transposition hit rate rose to **18.4%**, because better ordering means more
+positions are reached by their best move first.
+
+**Cumulative: 769,992 -> 82,360 nodes (-89.3%), 14.23s -> 1.56s (9.12x).**
+
+### Difficulty levels, measured rather than advertised
+
+`depth` is a ceiling; iterative deepening stops at whichever of depth-or-clock
+comes first, and in a sharp position the clock wins. The old settings claimed
+depth 8 for Brutal while never exceeding 6, so Brutal and Hard were the same
+opponent. Measured depths actually reached with the current engine:
+
+| level | depth cap | time | startpos | kiwipete |
+|---|---|---|---|---|
+| Easy | 3 | 0.5s | 3 | 3 |
+| Medium | 6 | 2.0s | 6 | 5 |
+| Hard | 8 | 6.0s | 7 | 5 |
+| Brutal | 12 | 15.0s | 8 | 5 |
+
+In quiet positions the levels now separate cleanly. In a dense tactical
+position such as kiwipete the top two still converge at depth 5 -- the branching
+factor there is simply too high for another ply inside the budget. That is an
+honest limit of the engine rather than something the labels should hide.

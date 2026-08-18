@@ -249,6 +249,30 @@ class Board:
         self.white_to_move = not self.white_to_move
         self.hash = prev_hash
 
+    def make_null(self):
+        """Pass the turn without moving, for null-move pruning.
+
+        The idea being tested is: even if I do nothing, is my position
+        still so good that the opponent cannot reach beta? Passing is not
+        a legal chess move, which is exactly why the search must not use
+        this while in check, or in an endgame bare enough for zugzwang --
+        positions where having to move is itself the problem, so a free
+        pass flatters wildly.
+        """
+        undo = (self.ep, self.halfmove, self.hash)
+        h = self.hash ^ ZOBRIST_SIDE
+        if self.ep is not None:
+            h ^= ZOBRIST_EP_FILE[self.ep & 7]
+        self.ep = None
+        self.halfmove += 1
+        self.white_to_move = not self.white_to_move
+        self.hash = h
+        return undo
+
+    def unmake_null(self, undo):
+        self.ep, self.halfmove, self.hash = undo
+        self.white_to_move = not self.white_to_move
+
     # -- serialisation ---------------------------------------------------
 
     @classmethod
