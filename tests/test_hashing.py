@@ -174,21 +174,47 @@ class TestRepetitionAwareness:
     evaluate such a line on material alone.
     """
 
-    def test_repetition_in_the_search_scores_as_a_draw(self):
-        """A hopeless position where perpetual check is the only salvation.
+    def test_the_search_actually_detects_repetitions(self):
+        """Direct evidence, not a proxy.
 
-        White is down a queen. Rather than accept a lost position, the rook can
-        check the black king forever along the seventh and eighth ranks. A
-        repetition-aware search values that at roughly a draw rather than the
-        catastrophe the raw material count suggests.
+        An earlier version of this test used a position where the engine simply
+        won a queen; it passed identically with repetition detection removed,
+        so it proved nothing. The engine now counts the nodes it scores as a
+        draw by repetition, which cannot be satisfied by accident.
         """
         from termchess import Engine
-        board = Board.from_fen("6k1/5ppp/8/8/8/8/5PPP/R2q2K1 w - - 0 1")
+        board = Board.from_fen("8/8/8/3k4/8/8/8/R3K3 w Q - 0 1")
         engine = Engine(depth=5, time_limit=10 ** 6)
-        _, score, _ = engine.choose(board)
-        material_only = -900
-        assert score > material_only, (
-            "score %d suggests the perpetual was not seen" % score)
+        engine.choose(board)
+        assert engine.repetitions > 0, (
+            "no node was scored as a repetition, so the feature is inert")
+
+    def test_repetition_changes_the_verdict(self):
+        """Differential evidence via the same API the game uses.
+
+        White can win a queen with Kxd2. Tell the engine that the position
+        *after* Kxd2 has already occurred, and that capture becomes a
+        repetition -- a draw -- rather than a win. The score must move
+        accordingly. This exercises exactly the path the CLI relies on when it
+        hands the engine the game's position history.
+        """
+        from termchess import Engine
+
+        fen = "4k3/8/8/8/8/8/3q4/R3K3 w - - 0 1"
+        board = Board.from_fen(fen)
+        engine = Engine(depth=3, time_limit=10 ** 6)
+
+        move, winning, _ = engine.choose(board)
+        assert winning > 400, "expected the queen capture to look winning"
+
+        undo = board.make(move)
+        already_seen = board.hash
+        board.unmake(undo)
+
+        _, drawn, _ = engine.choose(board, history=[already_seen])
+        assert drawn < winning, (
+            "score unchanged (%d) after declaring the resulting position "
+            "already seen, so game history is being ignored" % drawn)
 
     def test_history_is_honoured(self):
         """Positions already seen in the game count toward repetition."""

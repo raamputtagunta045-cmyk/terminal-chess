@@ -116,6 +116,12 @@ def main():
         seen = {board.key(): 1}
         undo_stack = []
         history = []
+        # Zobrist keys of every position that has actually occurred. The engine
+        # needs these to see that repeating one of them is a draw; without them
+        # it can only detect repetitions inside its own search, and will
+        # cheerfully repeat a position twice already on the board and hand away
+        # a won game.
+        seen_hashes = [board.hash]
 
         print(render(board, flipped))
 
@@ -166,6 +172,7 @@ def main():
                         seen[board.key()] -= 1
                         board.unmake(undo_stack.pop())
                         history.pop()
+                        seen_hashes.pop()
                     print(render(board, flipped))
                     continue
 
@@ -178,13 +185,14 @@ def main():
                 san = move_to_san(board, mv, legal)
                 undo_stack.append(board.make(mv))
                 history.append(san)
+                seen_hashes.append(board.hash)
                 seen[board.key()] = seen.get(board.key(), 0) + 1
                 print("  You play %s" % san)
 
             else:
                 print("  Thinking...", end='', flush=True)
                 started = time.time()
-                mv, score, depth = engine.choose(board)
+                mv, score, depth = engine.choose(board, history=seen_hashes)
                 elapsed = time.time() - started
                 if mv is None:
                     continue
@@ -192,6 +200,7 @@ def main():
                 san = move_to_san(board, mv)
                 undo_stack.append(board.make(mv))
                 history.append(san)
+                seen_hashes.append(board.hash)
                 seen[board.key()] = seen.get(board.key(), 0) + 1
 
                 # `score` is from the mover's (computer's) point of view;

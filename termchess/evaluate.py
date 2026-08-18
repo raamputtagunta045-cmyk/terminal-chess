@@ -98,8 +98,9 @@ PHASE_WEIGHT = {'N': 1, 'B': 1, 'R': 2, 'Q': 4, 'P': 0, 'K': 0}
 PHASE_OF = {c: PHASE_WEIGHT[UPPER[c]] for c in ALL_PIECES}
 TOTAL_PHASE = 24            # 4 knights + 4 bishops + 4 rooks(2) + 2 queens(4)
 
-# Non-pawn, non-king material below which the search treats the position as an
-# endgame (used by delta pruning, which is unsound in a bare endgame).
+# Non-pawn, non-king material below which the position counts as an endgame.
+# The search imports this for delta pruning rather than keeping its own copy,
+# so tuning it here actually changes behaviour.
 ENDGAME_MATERIAL = 1300
 
 # In the endgame a pawn's only job is to promote, so advancement is worth far
@@ -265,10 +266,15 @@ def evaluate(board):
                     eg -= BACKWARD_PAWN_PENALTY
 
             # Passed: no enemy pawn ahead on this file or either neighbour.
+            # "Ahead" of a white pawn means a *smaller* row, so the black pawn
+            # that matters is the one with the smallest row on each file --
+            # b_back, not b_front. Reading the most advanced black pawn instead
+            # let a rear doubled pawn mask the front one, handing a full passer
+            # bonus to a pawn that was plainly blockaded.
             r = w_front[f]
             blocked = False
             for ff in (left, f, right):
-                if 0 <= ff < 8 and 0 <= b_front[ff] < r:
+                if 0 <= ff < 8 and b_back[ff] < r:
                     blocked = True
                     break
             # A doubled pawn is not a passer in any useful sense: its own
@@ -298,10 +304,12 @@ def evaluate(board):
                     mg += BACKWARD_PAWN_PENALTY
                     eg += BACKWARD_PAWN_PENALTY
 
+            # Mirror of the above: ahead of a black pawn is a larger row, so
+            # the relevant white pawn is the one with the largest row, w_back.
             r = b_front[f]
             blocked = False
             for ff in (left, f, right):
-                if 0 <= ff < 8 and w_front[ff] != _NO_PAWN and w_front[ff] > r:
+                if 0 <= ff < 8 and w_back[ff] > r:
                     blocked = True
                     break
             if not blocked and bc[f] == 1:

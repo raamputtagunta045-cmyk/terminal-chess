@@ -8,7 +8,7 @@ operates on a position that never existed.
 
 from . import movegen
 from .constants import (
-    CASTLE_LOSS_BY_PIECE, CORNER_RIGHT, HEAVY_VALUE, IS_PRQ, START,
+    CASTLE_LOSS_BY_PIECE, CORNER_RIGHT, HEAVY_VALUE, IS_KING, IS_PRQ, START,
     ZOBRIST_CASTLING, ZOBRIST_EP_FILE, ZOBRIST_PIECE, ZOBRIST_SIDE,
     square_index, square_name,
 )
@@ -145,7 +145,7 @@ class Board:
         # discarded immediately), and it is deliberately not counted here --
         # its tracked square is unchanged by the capture and is restored by
         # unmake putting the king straight back where it stood.
-        if captured != '.':
+        if captured != '.' and not IS_KING[captured]:
             self.npieces -= 1
             self.heavy -= HEAVY_VALUE[captured]
             if IS_PRQ[captured]:
@@ -233,10 +233,11 @@ class Board:
 
         if captured != '.':
             b[cap_sq] = captured
-            self.npieces += 1
-            self.heavy += HEAVY_VALUE[captured]
-            if IS_PRQ[captured]:
-                self.prq += 1
+            if not IS_KING[captured]:
+                self.npieces += 1
+                self.heavy += HEAVY_VALUE[captured]
+                if IS_PRQ[captured]:
+                    self.prq += 1
         if rook:
             rf, rt = rook
             b[rf] = b[rt]

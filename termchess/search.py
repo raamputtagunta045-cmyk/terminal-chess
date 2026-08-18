@@ -16,7 +16,7 @@ import time
 
 from . import movegen
 from .constants import CHAR_VALUE, MATE
-from .evaluate import VALUES, evaluate
+from .evaluate import ENDGAME_MATERIAL, VALUES, evaluate
 
 
 class TimeUp(Exception):
@@ -43,8 +43,23 @@ DELTA_MARGIN = 200
 
 # Delta pruning is switched off once material is this low. In a bare endgame a
 # single pawn is often the whole game, so the assumption that a capture falling
-# short of alpha is irrelevant stops holding.
-DELTA_ENDGAME_FLOOR = 1300
+# short of alpha is irrelevant stops holding. Shared with the evaluation rather
+# than duplicated, so the threshold has one home.
+DELTA_ENDGAME_FLOOR = ENDGAME_MATERIAL
+
+# Ordering score bands. The exact numbers do not matter; the ordering between
+# the bands does, and keeping them far apart makes that ordering obvious.
+ORDER_TT_MOVE = 1_000_000
+ORDER_CAPTURE = 100_000
+ORDER_PROMOTION = 90_000
+ORDER_KILLER = 80_000
+
+MAX_PLY = 128
+
+# Killer moves: quiet moves that caused a cutoff at this ply somewhere else in
+# the tree. Two per ply is the usual compromise -- one is too forgetful, and
+# more dilutes the signal.
+KILLERS_PER_PLY = 2
 
 
 class Engine:
@@ -73,6 +88,15 @@ class Engine:
         self.depth_stats = []           # per-iteration (depth, nodes, secs, score)
         self.tt_probes = 0
         self.tt_hits = 0
+        self.repetitions = 0            # nodes scored as a draw by repetition
+        self.pv = []                    # principal variation, in SAN
+
+        # Killer moves per ply, and a from/to table of how often a quiet move
+        # has caused a cutoff anywhere. Both exist for the same reason: most
+        # positions in a search are similar to their neighbours, so a move that
+        # refuted one line usually refutes the next.
+        self.killers = [[None] * KILLERS_PER_PLY for _ in range(MAX_PLY)]
+        self.history = {}
 
         # hash -> (depth, flag, score, best_move)
         self.tt = {}
@@ -123,30 +147,63 @@ class Engine:
         if not self.nodes & 2047 and time.time() > self.deadline:
             raise TimeUp
 
-    def _order(self, board, moves, best_first=None):
+    def _order(self, board, moves, best_first=None, ply=None):
         """Sort moves most-promising first, so alpha-beta prunes sooner.
 
-        MVV-LVA: prefer capturing the most valuable victim with the least
-        valuable attacker. A cheap ordering heuristic is worth far more than a
-        deeper search with none.
+        Ordering matters more than almost anything else in an alpha-beta
+        search: the sooner the best move is tried, the sooner everything after
+        it can be cut off. The bands, in order:
+
+          1. the transposition table's move -- a real result from a real search
+          2. captures, by MVV-LVA (richest victim, cheapest attacker)
+          3. promotions
+          4. killers -- quiet moves that refuted a sibling line at this ply
+          5. everything else, by how often it has caused a cutoff before
+
+        Killers and history both exploit the same observation: positions near
+        each other in the tree are nearly the same position, so a refutation
+        that worked once usually works again.
         """
         b = board.squares
+        killers = self.killers[ply] if ply is not None and ply < MAX_PLY else ()
+        history = self.history
 
         def score(mv):
-            frm, to, promo = mv
-            s = 0
             if mv == best_first:
-                return 1_000_000
+                return ORDER_TT_MOVE
+            frm, to, promo = mv
             victim = b[to]
             if victim != '.':
                 # CHAR_VALUE is keyed by the raw piece character, so ordering
                 # no longer pays for an .upper() call per capture considered.
-                s += 10 * CHAR_VALUE[victim] - CHAR_VALUE[b[frm]]
+                return (ORDER_CAPTURE + 10 * CHAR_VALUE[victim]
+                        - CHAR_VALUE[b[frm]])
             if promo:
-                s += VALUES[promo]
-            return s
+                return ORDER_PROMOTION + VALUES[promo]
+            if mv in killers:
+                return ORDER_KILLER - killers.index(mv)
+            return history.get(mv, 0)
 
         return sorted(moves, key=score, reverse=True)
+
+    def _record_cutoff(self, mv, board, depth, ply):
+        """Remember a quiet move that caused a cutoff.
+
+        Captures are excluded: they are already ordered first by MVV-LVA, so
+        recording them would only crowd out the quiet refutations that the
+        ordering has no other way to find.
+
+        History is weighted by depth squared because a cutoff found deep in the
+        tree cost far more to establish and is correspondingly better evidence.
+        """
+        if board.squares[mv[1]] != '.' or mv[2]:
+            return
+        if ply < MAX_PLY:
+            killers = self.killers[ply]
+            if killers[0] != mv:
+                killers[1] = killers[0]
+                killers[0] = mv
+        self.history[mv] = self.history.get(mv, 0) + depth * depth
 
     def quiesce(self, board, alpha, beta):
         """Search only captures, so evaluation never lands mid-trade.
@@ -211,9 +268,15 @@ class Engine:
         # a draw. Without this the engine cannot see a perpetual at all -- it
         # will happily walk into one while believing it is winning.
         if ply and board.hash in self.path:
+            self.repetitions += 1
             return 0
         if board.halfmove >= 100 or not board.has_mating_material():
-            return 0
+            # Checkmate on the hundredth half-move is a win, not a draw: the
+            # game ends the instant the king cannot move, before any claim can
+            # be made. Only worth the extra move generation on this rare path.
+            if movegen.legal_moves(board):
+                return 0
+            return -MATE + ply if board.in_check(board.white_to_move) else 0
         if depth <= 0:
             return self.quiesce(board, alpha, beta)
 
@@ -249,7 +312,7 @@ class Engine:
         best_move = None
         self.path.append(key)
         try:
-            for mv in self._order(board, moves, best_first=tt_move):
+            for mv in self._order(board, moves, best_first=tt_move, ply=ply):
                 undo = board.make(mv)
                 try:
                     score = -self.negamax(board, depth - 1, -beta, -alpha,
@@ -263,6 +326,7 @@ class Engine:
                         alpha = score
                 if score >= beta:
                     self.cutoffs += 1
+                    self._record_cutoff(mv, board, depth, ply)
                     self._tt_store(key, depth, LOWER, best, mv, ply)
                     return best
 
@@ -292,7 +356,10 @@ class Engine:
         """
         self.nodes = 0
         self.qnodes = self.evals = self.cutoffs = 0
-        self.tt_probes = self.tt_hits = 0
+        self.tt_probes = self.tt_hits = self.repetitions = 0
+        self.killers = [[None] * KILLERS_PER_PLY for _ in range(MAX_PLY)]
+        self.history = {}
+        self.pv = []
         # Cleared per search so that the same position at the same depth always
         # produces the same answer, regardless of what was searched before it.
         self.tt = {}
