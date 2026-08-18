@@ -5,8 +5,9 @@ Every number here was produced by running the code. Nothing is estimated.
 Reproduce with:
 
 ```bash
-python bench.py                          # table
-python bench.py --compare baseline.json  # diff against the recorded baseline
+python -m termchess.bench                          # table
+python -m termchess.bench --compare baseline.json  # diff against the baseline
+python chess_game.py --benchmark                   # same, via the game
 ```
 
 ## Method

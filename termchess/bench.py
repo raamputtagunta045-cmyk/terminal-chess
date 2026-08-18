@@ -2,10 +2,12 @@
 """Deterministic fixed-depth benchmark for the search.
 
 Run:
-    python bench.py                     # human-readable table
-    python bench.py --json out.json     # machine-readable, for comparison
-    python bench.py --compare out.json  # diff against a saved run
-    python bench.py --quick             # shallower, for a fast sanity check
+    python -m termchess.bench                     # human-readable table
+    python -m termchess.bench --json out.json     # machine-readable
+    python -m termchess.bench --compare out.json  # diff against a saved run
+    python -m termchess.bench --quick             # shallower sanity check
+
+    python chess_game.py --benchmark              # same thing, via the game
 
 Why fixed depth rather than fixed time: a time-limited search visits a
 different number of nodes on every machine and every run, so it cannot detect
@@ -20,7 +22,10 @@ import platform
 import sys
 import time
 
-from chess_game import Board, Engine, MATE, move_to_san
+from .board import Board
+from .constants import MATE
+from .notation import move_to_san
+from .search import Engine
 
 # name, FEN (None = starting position), depth
 POSITIONS = [
