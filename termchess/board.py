@@ -7,11 +7,28 @@ operates on a position that never existed.
 """
 
 from . import movegen
-from .constants import START, square_index, square_name
+from .constants import (
+    CASTLE_LOSS_BY_PIECE, CORNER_RIGHT, HEAVY_VALUE, IS_PRQ, START,
+    square_index, square_name,
+)
 
 
 class Board:
-    """Full chess position with make/unmake for search."""
+    """Full chess position with make/unmake for search.
+
+    Four derived quantities are maintained incrementally rather than recomputed
+    on demand, because every one of them used to be an O(64) scan sitting in the
+    innermost search loop:
+
+        heavy     non-pawn, non-king material (drives the endgame test)
+        prq       count of pawns, rooks and queens (mating material)
+        npieces   count of non-king pieces        (mating material)
+        wk, bk    king squares
+
+    Incremental state is a classic source of silent corruption, so recount()
+    recomputes all of it from the squares and the integrity tests assert the
+    two agree after every move.
+    """
 
     def __init__(self):
         self.squares = list(START)
@@ -20,6 +37,29 @@ class Board:
         self.ep = None
         self.halfmove = 0
         self.fullmove = 1
+        self.recount()
+
+    # -- derived state ---------------------------------------------------
+
+    def recount(self):
+        """Recompute every incrementally-maintained field from the squares."""
+        self.heavy = 0
+        self.prq = 0
+        self.npieces = 0
+        self.wk = self.bk = -1
+        for s, p in enumerate(self.squares):
+            if p == '.':
+                continue
+            if p == 'K':
+                self.wk = s
+                continue
+            if p == 'k':
+                self.bk = s
+                continue
+            self.npieces += 1
+            self.heavy += HEAVY_VALUE[p]
+            if IS_PRQ[p]:
+                self.prq += 1
 
     # -- queries ---------------------------------------------------------
 
@@ -29,7 +69,7 @@ class Board:
                 frozenset(self.castling), self.ep)
 
     def king_sq(self, white):
-        return self.squares.index('K' if white else 'k')
+        return self.wk if white else self.bk
 
     def in_check(self, white):
         return movegen.attacked(self, self.king_sq(white), not white)
@@ -61,12 +101,40 @@ class Board:
             captured = b[cap_sq]
             b[cap_sq] = '.'
 
-        undo = (frm, to, promo, captured, cap_sq, set(self.castling),
+        # The castling set is stored by reference, not copied. Rights are now
+        # updated copy-on-write below, so the stored object is never mutated
+        # and unmake can simply put the original back. Copying it here cost an
+        # allocation on every make(), and the large majority of moves do not
+        # touch castling rights at all.
+        undo = (frm, to, promo, captured, cap_sq, self.castling,
                 self.ep, self.halfmove, self.fullmove, None)
+
+        # Incremental material bookkeeping. A captured king is possible in the
+        # pseudo-legal move list (the position is then illegal and the move is
+        # discarded immediately), and it is deliberately not counted here --
+        # its tracked square is unchanged by the capture and is restored by
+        # unmake putting the king straight back where it stood.
+        if captured != '.':
+            self.npieces -= 1
+            self.heavy -= HEAVY_VALUE[captured]
+            if IS_PRQ[captured]:
+                self.prq -= 1
 
         b[to] = promo.upper() if promo and white else (
             promo.lower() if promo else piece)
         b[frm] = '.'
+
+        if promo:
+            # A pawn (counted in prq) becomes something else; the piece count
+            # is unchanged but its classification is not.
+            self.prq -= 1
+            self.heavy += HEAVY_VALUE[promo]
+            if promo in 'RQ':
+                self.prq += 1
+        elif piece == 'K':
+            self.wk = to
+        elif piece == 'k':
+            self.bk = to
 
         if piece in 'Kk' and abs(to - frm) == 2:
             if to > frm:
@@ -81,13 +149,21 @@ class Board:
         self.ep = ((frm + to) // 2
                    if piece in 'Pp' and abs(to - frm) == 16 else None)
 
-        if piece == 'K':
-            self.castling -= {'K', 'Q'}
-        elif piece == 'k':
-            self.castling -= {'k', 'q'}
-        for corner, right in ((63, 'K'), (56, 'Q'), (7, 'k'), (0, 'q')):
-            if frm == corner or to == corner:
-                self.castling.discard(right)
+        rights = self.castling
+        if rights:
+            # Collect what this move could cost, then rebuild the set only if
+            # it actually costs something the position still had.
+            doomed = CASTLE_LOSS_BY_PIECE.get(piece)
+            from_corner = CORNER_RIGHT.get(frm)
+            to_corner = CORNER_RIGHT.get(to)
+            if doomed or from_corner or to_corner:
+                lost = set(doomed) if doomed else set()
+                if from_corner:
+                    lost.add(from_corner)
+                if to_corner:
+                    lost.add(to_corner)
+                if lost & rights:
+                    self.castling = rights - lost
 
         self.halfmove = 0 if (piece in 'Pp' or captured != '.') else self.halfmove + 1
         if not white:
@@ -103,8 +179,24 @@ class Board:
             piece = 'P' if piece.isupper() else 'p'
         b[frm] = piece
         b[to] = '.'
+
+        # Exactly the inverse of make()'s bookkeeping, in reverse order.
+        if promo:
+            self.heavy -= HEAVY_VALUE[promo]
+            if promo in 'RQ':
+                self.prq -= 1
+            self.prq += 1                      # the pawn comes back
+        elif piece == 'K':
+            self.wk = frm
+        elif piece == 'k':
+            self.bk = frm
+
         if captured != '.':
             b[cap_sq] = captured
+            self.npieces += 1
+            self.heavy += HEAVY_VALUE[captured]
+            if IS_PRQ[captured]:
+                self.prq += 1
         if rook:
             rf, rt = rook
             b[rf] = b[rt]
@@ -136,6 +228,7 @@ class Board:
         board.ep = None if ep == '-' else square_index(ep)
         board.halfmove = int(hm)
         board.fullmove = int(fm)
+        board.recount()
         return board
 
     def fen(self):
@@ -165,8 +258,8 @@ class Board:
 
         A pawn, rook or queen can always mate. Otherwise a lone minor piece
         cannot, but two pieces of any kind are treated as sufficient.
+
+        Answered from incrementally-maintained counts. It used to allocate a
+        list of every non-king piece on every one of 40,000 search nodes.
         """
-        pieces = [p for p in self.squares if p not in '.Kk']
-        if any(p.upper() in 'PRQ' for p in pieces):
-            return True
-        return len(pieces) > 1
+        return self.prq > 0 or self.npieces > 1

@@ -15,7 +15,7 @@ import random
 import time
 
 from . import movegen
-from .constants import MATE
+from .constants import CHAR_VALUE, MATE
 from .evaluate import VALUES, evaluate
 
 
@@ -61,7 +61,9 @@ class Engine:
                 return 1_000_000
             victim = b[to]
             if victim != '.':
-                s += 10 * VALUES[victim.upper()] - VALUES[b[frm].upper()]
+                # CHAR_VALUE is keyed by the raw piece character, so ordering
+                # no longer pays for an .upper() call per capture considered.
+                s += 10 * CHAR_VALUE[victim] - CHAR_VALUE[b[frm]]
             if promo:
                 s += VALUES[promo]
             return s

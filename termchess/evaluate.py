@@ -9,7 +9,9 @@ Every term must be colour-symmetric: a position and its mirror image must score
 as exact negatives. tests/test_eval_symmetry.py enforces that.
 """
 
-VALUES = {'P': 100, 'N': 320, 'B': 330, 'R': 500, 'Q': 900, 'K': 0}
+from .constants import PIECE_VALUE
+
+VALUES = PIECE_VALUE
 
 # Piece-square tables, written from White's perspective with rank 8 first, so
 # they index the squares list directly. Black reads the same table through the
@@ -85,43 +87,69 @@ ISOLATED_PAWN_PENALTY = 12
 BISHOP_PAIR_BONUS = 30
 
 
+def _combined_tables(king_table):
+    """Fold material value, piece-square bonus and colour sign into one table.
+
+    Evaluation asked three questions per square -- what colour is this, what
+    kind of piece is it, where does that piece want to be -- and answered them
+    with .isupper(), .upper() and a table lookup. All three have fixed answers
+    for a given (character, square) pair, so they are folded into a single
+    signed number here and the inner loop becomes `score += table[p][s]`.
+
+    Black's entry is the negated white value read through the mirrored index
+    s ^ 56, exactly as the original computed it, which is also what keeps the
+    evaluation colour-symmetric by construction.
+    """
+    tables = {}
+    for u in 'PNBRQK':
+        pst = king_table if u == 'K' else PST[u]
+        tables[u] = tuple(VALUES[u] + pst[s] for s in range(64))
+        tables[u.lower()] = tuple(-(VALUES[u] + pst[s ^ 56]) for s in range(64))
+    return tables
+
+
+MIDGAME_SCORE = _combined_tables(PST['K'])
+ENDGAME_SCORE = _combined_tables(KING_ENDGAME)
+
+
 def evaluate(board):
     """Static score in centipawns, positive = good for white."""
     b = board.squares
-    score = 0
-    bishops = [0, 0]
-    pawn_files = [[0] * 8, [0] * 8]
-    heavy = 0
+    # board.heavy is maintained incrementally by make/unmake, so the endgame
+    # test no longer costs a full scan of its own before the real one starts.
+    table = ENDGAME_SCORE if board.heavy < ENDGAME_MATERIAL else MIDGAME_SCORE
 
-    for p in b:
-        if p not in '.PpKk':
-            heavy += VALUES[p.upper()]
-    endgame = heavy < ENDGAME_MATERIAL
+    score = 0
+    white_bishops = 0
+    black_bishops = 0
+    wf = [0] * 8
+    bf = [0] * 8
 
     for s, p in enumerate(b):
         if p == '.':
             continue
-        white = p.isupper()
-        u = p.upper()
-        idx = s if white else s ^ 56
-        table = KING_ENDGAME if (u == 'K' and endgame) else PST[u]
-        val = VALUES[u] + table[idx]
-        score += val if white else -val
-        if u == 'B':
-            bishops[0 if white else 1] += 1
-        elif u == 'P':
-            pawn_files[0 if white else 1][s % 8] += 1
+        score += table[p][s]
+        if p == 'P':
+            wf[s & 7] += 1
+        elif p == 'p':
+            bf[s & 7] += 1
+        elif p == 'B':
+            white_bishops += 1
+        elif p == 'b':
+            black_bishops += 1
 
-    if bishops[0] >= 2:
+    if white_bishops >= 2:
         score += BISHOP_PAIR_BONUS
-    if bishops[1] >= 2:
+    if black_bishops >= 2:
         score -= BISHOP_PAIR_BONUS
 
-    for side, sign in ((0, 1), (1, -1)):
-        files = pawn_files[side]
+    for files, sign in ((wf, 1), (bf, -1)):
         for f, count in enumerate(files):
+            if not count:
+                continue
             if count > 1:
                 score -= sign * DOUBLED_PAWN_PENALTY * (count - 1)
-            if count and not (f and files[f - 1]) and not (f < 7 and files[f + 1]):
+            # Isolated: no friendly pawn on either adjacent file.
+            if not (f and files[f - 1]) and not (f < 7 and files[f + 1]):
                 score -= sign * ISOLATED_PAWN_PENALTY
     return score

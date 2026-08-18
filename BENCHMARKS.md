@@ -81,3 +81,51 @@ mixing them makes it impossible to tell which change paid:
 | `pytest -q` (full, incl. perft depth 5) | 272 passed, 28.95s |
 
 perft(5) from the starting position = 4,865,609 -- this must never regress.
+
+## Phase 2 -- representation and evaluation performance
+
+Same tree, explored faster. Node counts are **identical** to the baseline in
+every position (+0.0%), and every best move is unchanged, so the entire
+difference is throughput rather than a changed search. Saved as
+`bench-phase2.json`.
+
+| position | depth | nodes | nps (baseline) | nps (now) | speed |
+|---|---|---|---|---|---|
+| startpos | 5 | 81,084 | 67,435 | 134,217 | **+99.0%** |
+| italian | 5 | 474,062 | 54,184 | 108,580 | **+100.4%** |
+| kiwipete | 4 | 48,805 | 37,972 | 74,334 | **+95.8%** |
+| promotion | 4 | 11,503 | 41,722 | 82,229 | **+97.1%** |
+| endgame | 6 | 154,538 | 56,782 | 122,763 | **+116.2%** |
+| **TOTAL** | | **769,992** | **54,095** | **109,601** | **2.03x** |
+
+Benchmark suite wall-clock: 14.23s -> 7.03s. Full test suite: 28.95s -> 17.06s.
+
+### What changed, and what it bought
+
+| Change | Effect |
+|---|---|
+| Precomputed knight/king target lists, rays, pawn-attacker tables | `attacked()` 0.321s -> 0.107s |
+| Combined material+PST+sign tables keyed by raw piece char | `evaluate()` 0.766s -> 0.224s |
+| Incremental `heavy` material, so evaluation stops rescanning for the endgame test | removed a whole 64-square pass per evaluation |
+| Incremental `prq`/`npieces` | `has_mating_material()` went from a list allocation per node to two integer comparisons |
+| Incremental king squares | removed 104,768 `list.index` scans |
+| `CHAR_VALUE` in MVV-LVA ordering, char-keyed piece sets in movegen | eliminated **all** 4.36M `.upper()`/`.isupper()` calls |
+| Copy-on-write castling rights | removed a set allocation from most of ~145,000 `make()` calls |
+
+Profile of the same depth-5 search, before and after: **2.560s -> 1.006s**, with
+total function calls falling from 6,616,805 to 1,790,169. `str.upper` and
+`str.isupper` no longer appear in the profile at all.
+
+Remaining hot spots, for reference:
+
+| Hot spot | tottime | Note |
+|---|---|---|
+| `evaluate()` | 0.224s | still the largest single cost |
+| `pseudo_moves()` | 0.171s | |
+| `make()` | 0.121s | 144,831 calls, mostly from the legality filter |
+| `attacked()` | 0.107s | |
+
+The next large win is not in these functions individually but in `legal_moves()`
+calling make/unmake once per pseudo-legal move to test legality. Replacing that
+with pin detection is a correctness-sensitive redesign, so it is deliberately
+not attempted here.

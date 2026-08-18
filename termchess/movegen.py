@@ -12,46 +12,48 @@ generated move, to filter pseudo-legal moves down to legal ones.
 """
 
 from .constants import (
-    BISHOP_DIRS, KING_DELTAS, KNIGHT_DELTAS, QUEEN_DIRS, ROOK_DIRS,
+    BISHOP_RAYS, BLACK_PAWN_ATTACKERS, BLACK_PIECES, KING_TARGETS,
+    KNIGHT_TARGETS, RAYS_FOR, ROOK_RAYS, UPPER, WHITE_PAWN_ATTACKERS,
+    WHITE_PIECES,
 )
 
 
 def attacked(board, s, by_white):
-    """True if square `s` is attacked by the given side."""
+    """True if square `s` is attacked by the given side.
+
+    Walks precomputed target lists and rays rather than recomputing rank/file
+    arithmetic and bounds checks on every call -- this runs well over a hundred
+    thousand times per search.
+    """
     b = board.squares
-    r, f = divmod(s, 8)
 
-    pr = r + 1 if by_white else r - 1
-    if 0 <= pr < 8:
-        pawn = 'P' if by_white else 'p'
-        for pf in (f - 1, f + 1):
-            if 0 <= pf < 8 and b[pr * 8 + pf] == pawn:
+    if by_white:
+        for a in WHITE_PAWN_ATTACKERS[s]:
+            if b[a] == 'P':
                 return True
+        knight, king, straight, diagonal = 'N', 'K', 'RQ', 'BQ'
+    else:
+        for a in BLACK_PAWN_ATTACKERS[s]:
+            if b[a] == 'p':
+                return True
+        knight, king, straight, diagonal = 'n', 'k', 'rq', 'bq'
 
-    knight = 'N' if by_white else 'n'
-    for dr, df in KNIGHT_DELTAS:
-        rr, ff = r + dr, f + df
-        if 0 <= rr < 8 and 0 <= ff < 8 and b[rr * 8 + ff] == knight:
+    for t in KNIGHT_TARGETS[s]:
+        if b[t] == knight:
             return True
 
-    king = 'K' if by_white else 'k'
-    for dr, df in KING_DELTAS:
-        rr, ff = r + dr, f + df
-        if 0 <= rr < 8 and 0 <= ff < 8 and b[rr * 8 + ff] == king:
+    for t in KING_TARGETS[s]:
+        if b[t] == king:
             return True
 
-    for dirs, names in ((ROOK_DIRS, 'RQ'), (BISHOP_DIRS, 'BQ')):
-        targets = names if by_white else names.lower()
-        for dr, df in dirs:
-            rr, ff = r + dr, f + df
-            while 0 <= rr < 8 and 0 <= ff < 8:
-                p = b[rr * 8 + ff]
+    for rays, targets in ((ROOK_RAYS[s], straight), (BISHOP_RAYS[s], diagonal)):
+        for ray in rays:
+            for t in ray:
+                p = b[t]
                 if p != '.':
                     if p in targets:
                         return True
                     break
-                rr += dr
-                ff += df
     return False
 
 
@@ -90,15 +92,18 @@ def pseudo_moves(board):
     """
     b = board.squares
     white = board.white_to_move
+    ep = board.ep
+    own = WHITE_PIECES if white else BLACK_PIECES
     moves = []
+    append = moves.append
 
     for s, p in enumerate(b):
-        if p == '.' or p.isupper() != white:
+        if p not in own:
             continue
-        r, f = divmod(s, 8)
-        u = p.upper()
+        u = UPPER[p]
 
         if u == 'P':
+            r, f = divmod(s, 8)
             d = -1 if white else 1
             start_rank = 6 if white else 1
             last_rank = 0 if white else 7
@@ -107,58 +112,46 @@ def pseudo_moves(board):
                 if b[r1 * 8 + f] == '.':
                     if r1 == last_rank:
                         for pr in 'QRBN':
-                            moves.append((s, r1 * 8 + f, pr))
+                            append((s, r1 * 8 + f, pr))
                     else:
-                        moves.append((s, r1 * 8 + f, None))
+                        append((s, r1 * 8 + f, None))
                         r2 = r + 2 * d
                         if r == start_rank and b[r2 * 8 + f] == '.':
-                            moves.append((s, r2 * 8 + f, None))
+                            append((s, r2 * 8 + f, None))
                 for df in (-1, 1):
                     ff = f + df
                     if not 0 <= ff < 8:
                         continue
                     t = r1 * 8 + ff
                     tp = b[t]
-                    if (tp != '.' and tp.isupper() != white) or t == board.ep:
+                    if (tp != '.' and tp not in own) or t == ep:
                         if r1 == last_rank:
                             for pr in 'QRBN':
-                                moves.append((s, t, pr))
+                                append((s, t, pr))
                         else:
-                            moves.append((s, t, None))
+                            append((s, t, None))
 
         elif u == 'N':
-            for dr, df in KNIGHT_DELTAS:
-                rr, ff = r + dr, f + df
-                if 0 <= rr < 8 and 0 <= ff < 8:
-                    t = rr * 8 + ff
-                    if b[t] == '.' or b[t].isupper() != white:
-                        moves.append((s, t, None))
+            for t in KNIGHT_TARGETS[s]:
+                if b[t] not in own:
+                    append((s, t, None))
 
         elif u == 'K':
-            for dr, df in KING_DELTAS:
-                rr, ff = r + dr, f + df
-                if 0 <= rr < 8 and 0 <= ff < 8:
-                    t = rr * 8 + ff
-                    if b[t] == '.' or b[t].isupper() != white:
-                        moves.append((s, t, None))
+            for t in KING_TARGETS[s]:
+                if b[t] not in own:
+                    append((s, t, None))
             moves.extend(castle_moves(board, s, white))
 
         else:
-            dirs = (ROOK_DIRS if u == 'R'
-                    else BISHOP_DIRS if u == 'B' else QUEEN_DIRS)
-            for dr, df in dirs:
-                rr, ff = r + dr, f + df
-                while 0 <= rr < 8 and 0 <= ff < 8:
-                    t = rr * 8 + ff
+            for ray in RAYS_FOR[u][s]:
+                for t in ray:
                     tp = b[t]
                     if tp == '.':
-                        moves.append((s, t, None))
+                        append((s, t, None))
                     else:
-                        if tp.isupper() != white:
-                            moves.append((s, t, None))
+                        if tp not in own:
+                            append((s, t, None))
                         break
-                    rr += dr
-                    ff += df
     return moves
 
 
