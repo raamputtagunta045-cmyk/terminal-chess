@@ -199,3 +199,56 @@ the tactical positions full of captures that go nowhere. The quiet positions
 material floor by design.
 
 **Cumulative so far: 769,992 -> 291,914 nodes (-62.1%), 14.23s -> 2.99s (4.76x).**
+
+## Phase 5 -- evaluation quality
+
+Evaluation now understands things it previously could not see, at a real cost
+in speed. Saved as `bench-phase5.json`. The frozen values in
+`tests/test_eval_regression.py` were regenerated in the same commit: **43 of 48
+changed**, which is the evidence that the evaluation genuinely moved.
+
+| position | nodes (phase 4a) | nodes (now) | nodes | speed |
+|---|---|---|---|---|
+| startpos | 35,696 | 35,010 | -1.9% | -33% |
+| italian | 167,797 | 167,115 | -0.4% | -33% |
+| kiwipete | 24,632 | 24,747 | +0.5% | -22% |
+| promotion | 7,509 | 7,759 | +3.3% | -32% |
+| endgame | 56,280 | 31,695 | **-43.7%** | -21% |
+| **TOTAL** | **291,914** | **266,326** | **-8.8%** | |
+
+Wall-clock 2.99s -> 3.90s (+30%); NPS 97,608 -> 68,330. Best move unchanged in
+every position.
+
+### The trade, stated plainly
+
+This is the first phase that made the benchmark **slower**. The evaluation does
+substantially more work per call, and evaluation is called once per quiescence
+node -- 58% of all nodes. A 30% wall-clock cost is roughly a third of a ply of
+search depth; understanding passed pawns, king safety and open files is worth
+considerably more than that in playing strength. The endgame position is the
+visible proof: **-43.7% nodes**, because an evaluation that actually understands
+passed pawns guides the search instead of groping.
+
+Should that judgement ever need revisiting, the levers are: fold the
+middlegame/endgame pair into a single table of tuples (done -- recovered ~4%),
+or cache pawn-structure results by pawn hash, which is the standard next step
+and was not attempted here.
+
+### What was added, and why each earns its place
+
+| Term | Justification |
+|---|---|
+| Tapered midgame/endgame phase | The old code flipped the king table the instant material crossed 1300cp. A single capture could swing the score for no positional reason, and the search chased that discontinuity. |
+| Endgame pawn table | In the endgame a pawn's only job is to promote, so advancement outweighs central shape. |
+| Passed pawns (rank-scaled, endgame-weighted) | The single most important endgame feature; an unstoppable passer simply wins. |
+| Doubled / isolated / backward pawns | Structural weaknesses that cannot be defended by other pawns. |
+| Rook on open / semi-open file | A rook's value is mostly the file it stands on. |
+| King pawn shield (middlegame only) | Only dangerous while pieces remain to exploit it -- the clearest illustration of why tapering exists. |
+| Bishop pair | Covers both colour complexes; worth more than the sum of its parts. |
+
+**Mobility was considered and rejected.** It requires generating moves inside
+the evaluation, which runs once per quiescence node. The cost is far larger than
+the terms above and the benefit largely overlaps the piece-square tables, which
+already reward pieces on squares from which they have scope.
+
+**Cumulative: 769,992 -> 266,326 nodes (-65.4%), 14.23s -> 3.90s (3.65x).**
