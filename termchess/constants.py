@@ -137,8 +137,8 @@ BLACK_PAWN_ATTACKERS = _pawn_attackers(False)
 # calls and 15% of runtime in the depth-5 profile.
 WHITE_PIECES = frozenset('PNBRQK')
 BLACK_PIECES = frozenset('pnbrqk')
-IS_WHITE = {c: True for c in WHITE_PIECES}
-IS_WHITE.update({c: False for c in BLACK_PIECES})
+IS_WHITE = dict.fromkeys(WHITE_PIECES, True)
+IS_WHITE.update(dict.fromkeys(BLACK_PIECES, False))
 UPPER = {c: c for c in WHITE_PIECES}
 UPPER.update({c: c.upper() for c in BLACK_PIECES})
 

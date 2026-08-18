@@ -1,0 +1,50 @@
+# Tooling configuration only. The game itself has no build step and no runtime
+# dependencies -- `python chess_game.py` is the whole install procedure, and
+# that is deliberate.
+
+[tool.ruff]
+line-length = 88
+target-version = "py38"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = [
+    # The codebase uses %-formatting throughout, which is correct for 3.8 and
+    # consistent; converting it wholesale would be churn for no gain.
+    "UP031",
+    "UP032",
+    # Zip without strict= is fine on 3.8, where strict does not exist.
+    "B905",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests deliberately import inside functions to keep the collection phase cheap
+# and to make each test's dependencies obvious at the point of use.
+"tests/*" = ["E501"]
+# The mirrored-FEN helper reads better as an if/else than as a ternary long
+# enough to wrap; collapsing it would obscure what the two branches mean.
+"conftest.py" = ["SIM108"]
+# The original test suite, kept deliberately unchanged as an
+# API-compatibility harness: it was written against the single-file version and
+# still passes byte-for-byte against the package, which is the evidence that
+# the refactor preserved the public interface. Reformatting it -- even to drop
+# a genuinely unused import -- would quietly destroy that guarantee.
+"test_chess_game.py" = ["E501", "I001", "F401"]
+
+[tool.mypy]
+# No python_version pin: mypy no longer accepts targets below 3.10, while the
+# code itself supports older interpreters. Version coverage belongs to the CI
+# matrix, which actually runs the tests on each one, rather than to a type
+# checker asserting it from a config file.
+files = ["termchess"]
+# Deliberately not strict. The engine is duck-typed by design -- movegen takes
+# "something with .squares" rather than a Board -- and forcing nominal types on
+# that would add annotation noise without catching real defects. What is worth
+# catching is the accidental None and the misspelled attribute.
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
+check_untyped_defs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true

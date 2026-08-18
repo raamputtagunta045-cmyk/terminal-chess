@@ -1,146 +1,245 @@
-# Terminal Chess
+# terminal-chess
 
-A complete chess game with a built-in engine, in a single Python file. No dependencies —
-just the standard library.
+A complete chess game and chess engine in pure Python, with no dependencies at
+all. Clone it and run it:
+
+```bash
+python chess_game.py
+```
+
+That is the entire install procedure. The engine, the rules, the notation
+parser and the interface are standard library only — there is nothing to
+`pip install`, nothing to build, and nothing to configure.
 
 ```
    +------------------------+
- 8 | r  n  b  q  k  b     r |
- 7 | p  p  p  p  p  p  p  p |
- 6 |    .     .     n     . |
- 5 | .     .     .     .    |
- 4 |    .     .  P  .     . |
- 3 | .     .     .     .    |
- 2 | P  P  P  P     P  P  P |
- 1 | R  N  B  Q  K  B  N  R |
+ 8 | ♜  ♞  ♝  ♛  ♚  ♝  ♞  ♜ |
+ 7 | ♟  ♟  ♟  ♟  .  ♟  ♟  ♟ |
+ 6 |    .     .     .     . |
+ 5 | .     .     ♟     .    |
+ 4 |    .     .  ♙  .     . |
+ 3 | .     .     .     ♘    |
+ 2 | ♙  ♙  ♙  ♙     ♙  ♙  ♙ |
+ 1 | ♖  ♘  ♗  ♕  ♔  ♗     ♖ |
    +------------------------+
      a  b  c  d  e  f  g  h
-
-  1. > e4
-  You play e4
-  Computer plays Nf6      (depth 4, +0.35, 0.3s, 19416 nodes)
+  2. > Nc6
+  You play Nc6
+  Thinking...  Computer plays Bb5     (depth 8, +0.15, 1.4s, 31220 nodes)
+  expecting: Bb5 a6 Ba4 Nf6 O-O
 ```
 
-(In a real terminal the pieces render as `♜♞♝♛♚♟`; it falls back to letters when the
-console can't encode them.)
+## What makes it interesting
 
-## Features
+It is not just a rules implementation. The engine is a real alpha-beta searcher
+with the machinery that implies, and every claim below is backed by a
+reproducible measurement in [BENCHMARKS.md](BENCHMARKS.md):
 
-- **Complete rules.** Castling, en passant, promotion, pinned pieces, checkmate,
-  stalemate, the fifty-move rule, threefold repetition, and insufficient material.
-- **Real engine.** Iterative-deepening negamax with alpha-beta pruning, quiescence search,
-  MVV-LVA move ordering, and piece-square-table evaluation.
-- **Both notations.** Type `e2e4` or `Nf3` — coordinate and algebraic both work.
-- **Verified correctness.** 191 tests, including [perft][perft] to depth 5 (4,865,609
-  positions) and four standard reference positions.
+- **Iterative-deepening negamax** with fail-soft alpha-beta
+- **Transposition table** with Zobrist hashing, depth-preferred replacement and
+  ply-corrected mate scores
+- **Null-move pruning**, **late move reductions** and **mate-distance pruning**
+- **Quiescence search** with delta pruning, so evaluation never lands mid-trade
+- **Move ordering** by transposition move, MVV-LVA captures, killers, then a
+  history heuristic
+- **Tapered evaluation** sliding between middlegame and endgame readings, with
+  passed pawns, pawn-structure weaknesses, rook files and king safety
+- **Repetition detection inside the search**, so the engine can see a perpetual
+- **Perft-verified move generation** against published counts to depth 5
 
-[perft]: https://www.chessprogramming.org/Perft
+## Performance
 
-## Requirements
+Measured on the benchmark suite (five fixed positions at fixed depth), against
+the engine as it stood before this work:
 
-Python 3.8 or newer. Nothing else.
+| | Before | Now | |
+|---|---|---|---|
+| Nodes to reach the same depths | 769,992 | **82,360** | −89.3% |
+| Wall-clock | 14.23s | **1.50s** | **9.50× faster** |
+| Effective branching factor (start position) | 12.30 | **4.85** | |
+| Transposition hit rate | — | 18.4% | |
 
-## Play
+Node counts are the authoritative figure: they are deterministic and reproduce
+on any machine. Wall-clock depends on the host.
+
+Reproduce it yourself:
+
+```bash
+python -m termchess.bench                          # the table
+python -m termchess.bench --compare baseline.json  # diff against the original
+python chess_game.py --benchmark                   # same, through the game
+```
+
+## Playing
+
+Moves are accepted in either notation:
+
+```
+e2e4    g1f3    e7e8q          coordinates, with an optional promotion piece
+e4      Nf3     exd5   O-O     standard algebraic notation
+```
+
+### Commands
+
+| | |
+|---|---|
+| `board` `flip` `moves` `fen` | look at the position |
+| `setfen <FEN>` `history` `new` `undo` | change or review the game |
+| `eval` | static evaluation, with no search at all |
+| `analyze [FEN]` | full search report: verdict, best move, PV, statistics |
+| `hint` | the move the engine would play here |
+| `go` | let the engine move for you |
+| `perft <n>` | count leaf nodes at depth n |
+| `depth <n>` `time <secs>` | change how hard the engine thinks |
+| `save <file>` `load <file>` | write or read a PGN file |
+
+### Difficulty
+
+`depth` is a ceiling, not a promise — iterative deepening stops at whichever of
+depth-or-clock comes first, and in a sharp position the clock usually wins.
+These are the depths actually reached, measured rather than advertised:
+
+| Level | Depth cap | Time | Reached (quiet) | Reached (tactical) |
+|---|---|---|---|---|
+| Easy | 3 | 0.5s | 3 | 3 |
+| Medium | 6 | 2.0s | 6 | 5 |
+| Hard | 8 | 6.0s | 7 | 5 |
+| Brutal | 12 | 15.0s | 8 | 5 |
+
+Easy and Medium also blunder on purpose, choosing at random among moves within
+a centipawn margin of the best, so they lose plausibly rather than randomly.
+
+## As an analysis tool
+
+Any position can be analysed without playing a game:
+
+```bash
+python chess_game.py --analyze "6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1"
+```
+
+```
+  position   6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1
+  static     +5.25  (evaluation before any search)
+  verdict    mate in 1 for White
+  best move  Ra8#
+  pv         Ra8#
+
+  depth      2 of 8 requested
+  nodes      124  (56 in quiescence, 45%)
+  time       0.00s at 110419 nodes/sec
+  cutoffs    39
+  table      12 entries, 0 of 13 probes hit (0.0%)
+```
+
+The same report is available in-game with `analyze`, which also accepts a FEN.
+
+## Architecture
+
+```
+chess_game.py          entry point; re-exports the public API
+termchess/
+  constants.py         board geometry and precomputed tables; imports nothing
+  board.py             position state, make/unmake, FEN, Zobrist hashing
+  movegen.py           pseudo-legal generation, attack detection, legality
+  evaluate.py          tapered evaluation
+  search.py            negamax, alpha-beta, quiescence, transposition table
+  notation.py          SAN generation and parsing
+  pgn.py               game import and export
+  analyze.py           position analysis reporting
+  perft.py             move-generation verification
+  cli.py               rendering and the interactive loop
+  bench.py             the benchmark harness
+```
+
+Each module imports only from those above it, so the dependency graph is
+acyclic. The package is named `termchess` rather than `chess` deliberately: a
+top-level `chess` package would shadow the widely-installed `python-chess` for
+anyone who has it.
+
+### How the search works
+
+Alpha-beta only prunes well if the best move is tried early, so most of the
+engine's speed comes from ordering rather than from raw evaluation throughput:
+
+1. The **transposition table's** move — a real result from a real search
+2. **Captures**, richest victim by cheapest attacker
+3. **Promotions**
+4. **Killers** — quiet moves that refuted a sibling line at this ply
+5. Everything else, by **history** — how often it has caused a cutoff before
+
+On top of that, **null-move pruning** asks whether the position is so good that
+the opponent cannot catch up even if we simply pass; **late move reductions**
+search unpromising moves one ply shallower and re-search only if they surprise
+us; and **delta pruning** discards captures in quiescence that cannot reach
+alpha even in the best case.
+
+### How the evaluation works
+
+A position is not simply middlegame or endgame — it slides between them as
+pieces come off. Every position gets a phase from 24 down to 0, and the score
+interpolates between two readings. Terms that belong to one regime are weighted
+into that reading: king safety is middlegame-only, passed pawns count for far
+more in the endgame.
+
+Every term is colour-symmetric by construction, and a test asserts that a
+position and its mirror image score as exact negatives.
+
+## Testing
+
+```bash
+python -m pytest -q -m "not slow"   # fast gate
+python -m pytest -q                 # everything, including perft to depth 5
+python -m ruff check .              # lint
+python -m mypy                      # types
+```
+
+**500 tests** in the fast gate, 523 in total, at **92% coverage** of the
+package. The suite is built around properties rather than examples where it
+can be:
+
+- **Perft** against published counts for five standard positions — the
+  authority on move generation being correct
+- **Make/unmake integrity** — every field restored, three plies deep, plus a
+  seeded 120-move game unwound in reverse
+- **Zobrist consistency** — the incremental hash must always equal the
+  from-scratch hash
+- **Evaluation symmetry** — mirrored positions score as exact negatives
+- **Frozen evaluation values** — 48 positions locked, regenerated only in the
+  same commit that deliberately changes the evaluation
+- **Tactical suite** — mates, material wins and blunders to avoid, each
+  verified against the engine before being written down
+- **PGN round-tripping** — export, parse, export must converge
+
+## Development
 
 ```bash
 git clone https://github.com/raamputtagunta045-cmyk/terminal-chess.git
 cd terminal-chess
-python chess_game.py
-```
-
-You'll be asked which colour you want and how strong the engine should be, then it's your
-move.
-
-## Entering moves
-
-Either notation works:
-
-| Style | Examples |
-|---|---|
-| Coordinate | `e2e4`, `g1f3`, `e7e8q` |
-| Algebraic | `e4`, `Nf3`, `exd5`, `O-O`, `e8=Q` |
-
-Bare coordinates promote to a queen by default; add `q`, `r`, `b`, or `n` to choose.
-Check and mate suffixes (`+`, `#`) are optional.
-
-## Commands
-
-| Command | Effect |
-|---|---|
-| `moves` | List every legal move |
-| `undo` | Take back your move and the reply |
-| `board` | Redraw the position |
-| `flip` | Flip board orientation |
-| `fen` | Print the position as FEN |
-| `new` | Restart |
-| `help` | Show help |
-| `quit` | Exit |
-
-## Difficulty
-
-| Level | Depth | Time budget | Behaviour |
-|---|---|---|---|
-| Easy | 2 | 0.4s | Picks randomly within 90cp of best — makes real mistakes |
-| Medium | 4 | 1.5s | Within 25cp of best — occasionally loose |
-| Hard | 6 | 4.0s | Always plays its best move |
-| Brutal | 8 | 10.0s | Always best, searches deepest |
-
-Easy and Medium are deliberately imperfect. The randomness is bounded by a centipawn
-threshold rather than being uniformly random, so they play plausible moves and blunder
-like a human rather than flailing.
-
-## How it works
-
-The board is a flat 64-element list, index 0 being a8 and 63 being h1 — rank 8 first, so
-it lines up with FEN. Uppercase is White, lowercase Black.
-
-Move generation produces pseudo-legal moves, then filters them by playing each one and
-testing whether the mover's king is attacked. Attack detection works *backwards* from the
-target square — casting rays outward and checking what sits at the end — instead of
-enumerating every enemy move, which keeps it cheap enough to call inside search.
-
-The search is negamax with alpha-beta, extended by a capture-only quiescence search so the
-engine doesn't stop evaluating in the middle of a trade. Iterative deepening means it always
-has a usable move ready when the clock runs out. Evaluation is material plus piece-square
-tables, with bonuses for the bishop pair and penalties for doubled and isolated pawns, and
-a separate king table for the endgame.
-
-`make()` returns an undo record that `unmake()` consumes, so the search never copies the
-board.
-
-## Tests
-
-```bash
 pip install -r requirements-dev.txt
-
-python -m pytest -q                  # everything (~25s)
-python -m pytest -q -m "not slow"    # skip perft(5) (~4s)
-python -m pytest -q -k castling      # one topic
+python -m pytest -q -m "not slow"
 ```
 
-Coverage:
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the rules that matter — chiefly that
+perft must never regress and benchmark numbers must never be estimated.
 
-```bash
-python -m coverage run -m pytest -q -m "not slow"
-python -m coverage report --show-missing --include=chess_game.py
-```
+## Roadmap
 
-The suite covers move generation, castling rights and transit-square rules, en passant
-(including the case where capturing would expose the king), promotion, absolute pins,
-game-end detection, `make`/`unmake` symmetry, SAN round-tripping, evaluation symmetry, and
-search behaviour.
+The most promising remaining work, roughly in order of expected value:
 
-Perft is the real guarantee. Unit tests alone won't catch move-generation bugs, so any
-change to `gen_pseudo()` or `legal_moves()` has to keep `TestPerft` green.
+1. **Faster legality filtering.** `legal_moves()` plays and unplays every
+   pseudo-legal move to test it. Pin detection would avoid most of that, and it
+   is the single largest remaining cost in the profile.
+2. **A pawn-structure cache** keyed by a pawn-only hash. Evaluation runs once
+   per quiescence node and recomputes the same pawn analysis constantly.
+3. **Aspiration windows** around the previous iteration's score.
+4. **Opening book and endgame tablebase probing**, which would improve play at
+   both ends of the game far more cheaply than more search.
 
-## Layout
-
-```
-chess_game.py        the game and engine
-test_chess_game.py   191 tests
-pytest.ini           registers the "slow" marker
-```
+A known limitation: repetition draws are path-dependent, but their consequences
+are cached in a transposition table keyed only on position. This is standard
+practice and no misplay has been demonstrated, but it is a real theoretical
+hole.
 
 ## Licence
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

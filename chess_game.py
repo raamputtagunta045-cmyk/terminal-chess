@@ -4,6 +4,7 @@
 Run:
     python chess_game.py
     python chess_game.py --benchmark
+    python chess_game.py --analyze "<FEN>"
 
 Enter moves as coordinates (e2e4, e7e8q) or algebraic notation
 (e4, Nf3, exd5, O-O, e8=Q).
@@ -18,15 +19,15 @@ entry point named in the README, and re-exports the public API so that
 import sys
 
 from termchess import (
-    Board,
-    Engine,
     FILES,
     MATE,
     PST,
     RANKS,
     START,
-    TimeUp,
     VALUES,
+    Board,
+    Engine,
+    TimeUp,
     __version__,
     attacked,
     evaluate,
@@ -86,4 +87,4 @@ if __name__ == "__main__":
     if "--benchmark" in sys.argv:
         from termchess.bench import main as bench_main
         sys.exit(bench_main([a for a in sys.argv[1:] if a != "--benchmark"]))
-    main()
+    sys.exit(main() or 0)

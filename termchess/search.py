@@ -403,8 +403,8 @@ class Engine:
         following those from the root replays the line the engine actually
         expects. A visited set guards against a repetition looping forever.
         """
-        pv = []
-        undos = []
+        pv = []           # type: list
+        undos = []        # type: list
         seen = set()
         mv = first_move
         try:
@@ -488,12 +488,15 @@ class Engine:
                 # partial one has searched only some of the root moves.
                 break
 
-        self.pv = self.extract_pv(board, best) if best else []
-
         if self.blunder:
             # Weaker levels pick randomly among moves within a centipawn slack
             # of the best, so they blunder plausibly rather than at random.
             pool = [m for m, s in scored if s >= best_score - self.blunder]
             best = random.choice(pool)
             best_score = dict(scored)[best]
+
+        # Extracted after the blunder choice, not before: the reported line has
+        # to begin with the move actually played, or a weakened level explains
+        # itself with a variation it did not choose.
+        self.pv = self.extract_pv(board, best) if best else []
         return best, best_score, reached

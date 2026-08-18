@@ -8,9 +8,18 @@ operates on a position that never existed.
 
 from . import movegen
 from .constants import (
-    CASTLE_LOSS_BY_PIECE, CORNER_RIGHT, HEAVY_VALUE, IS_KING, IS_PRQ, START,
-    ZOBRIST_CASTLING, ZOBRIST_EP_FILE, ZOBRIST_PIECE, ZOBRIST_SIDE,
-    square_index, square_name,
+    CASTLE_LOSS_BY_PIECE,
+    CORNER_RIGHT,
+    HEAVY_VALUE,
+    IS_KING,
+    IS_PRQ,
+    START,
+    ZOBRIST_CASTLING,
+    ZOBRIST_EP_FILE,
+    ZOBRIST_PIECE,
+    ZOBRIST_SIDE,
+    square_index,
+    square_name,
 )
 
 
@@ -114,7 +123,15 @@ class Board:
         white = piece.isupper()
         captured = b[to]
         cap_sq = to
+
+        # Worked out before the undo record is built rather than spliced in
+        # afterwards. The old `undo[:9] + (rook_move, undo[10])` produced the
+        # right values but made the record's shape depend on the path taken
+        # through the function, which is exactly the sort of thing that breaks
+        # quietly when a field is added.
         rook_move = None
+        if piece in 'Kk' and abs(to - frm) == 2:
+            rook_move = (frm + 3, frm + 1) if to > frm else (frm - 4, frm - 1)
 
         if piece in 'Pp' and to == self.ep and captured == '.':
             cap_sq = to + (8 if white else -8)
@@ -127,7 +144,7 @@ class Board:
         # allocation on every make(), and the large majority of moves do not
         # touch castling rights at all.
         undo = (frm, to, promo, captured, cap_sq, self.castling,
-                self.ep, self.halfmove, self.fullmove, None, self.hash)
+                self.ep, self.halfmove, self.fullmove, rook_move, self.hash)
 
         # Zobrist update. XOR out what stops being true, XOR in what starts
         # being true. The piece leaving its square and arriving at another are
@@ -168,16 +185,11 @@ class Board:
         elif piece == 'k':
             self.bk = to
 
-        if piece in 'Kk' and abs(to - frm) == 2:
-            if to > frm:
-                rf, rt = frm + 3, frm + 1
-            else:
-                rf, rt = frm - 4, frm - 1
+        if rook_move:
+            rf, rt = rook_move
             b[rt] = b[rf]
             b[rf] = '.'
             h ^= ZOBRIST_PIECE[b[rt]][rf] ^ ZOBRIST_PIECE[b[rt]][rt]
-            rook_move = (rf, rt)
-            undo = undo[:9] + (rook_move, undo[10])
 
         self.ep = ((frm + to) // 2
                    if piece in 'Pp' and abs(to - frm) == 16 else None)
@@ -279,7 +291,7 @@ class Board:
     def from_fen(cls, text):
         placement, side, castle, ep, hm, fm = text.split()
         board = cls()
-        squares = []
+        squares = []          # type: list
         for row in placement.split('/'):
             for ch in row:
                 if ch.isdigit():

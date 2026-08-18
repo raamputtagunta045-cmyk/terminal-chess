@@ -14,8 +14,8 @@ import random
 
 import pytest
 
-from conftest import CORPUS, CORPUS_IDS, board_state, describe
 from chess_game import Board, square_index
+from conftest import CORPUS, CORPUS_IDS, board_state, describe
 
 
 def find(board, san):

@@ -13,8 +13,8 @@ the check for free.
 
 import pytest
 
-from conftest import CORPUS, CORPUS_IDS, mirror_fen
 from chess_game import Board, evaluate
+from conftest import CORPUS, CORPUS_IDS, mirror_fen
 
 
 class TestMirror:
@@ -92,7 +92,11 @@ class TestTaperedEvaluation:
     def test_score_is_between_the_two_readings(self):
         """Interpolation must not produce a value outside its endpoints."""
         from termchess.evaluate import (
-            ENDGAME_SCORE, MIDGAME_SCORE, TOTAL_PHASE, PHASE_OF)
+            ENDGAME_SCORE,
+            MIDGAME_SCORE,
+            PHASE_OF,
+            TOTAL_PHASE,
+        )
         fen = "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 5"
         board = Board.from_fen(fen)
         mg = sum(MIDGAME_SCORE[p][s]

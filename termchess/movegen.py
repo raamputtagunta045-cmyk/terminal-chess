@@ -12,8 +12,15 @@ generated move, to filter pseudo-legal moves down to legal ones.
 """
 
 from .constants import (
-    BISHOP_RAYS, BLACK_PAWN_ATTACKERS, BLACK_PIECES, KING_TARGETS,
-    KNIGHT_TARGETS, RAYS_FOR, ROOK_RAYS, UPPER, WHITE_PAWN_ATTACKERS,
+    BISHOP_RAYS,
+    BLACK_PAWN_ATTACKERS,
+    BLACK_PIECES,
+    KING_TARGETS,
+    KNIGHT_TARGETS,
+    RAYS_FOR,
+    ROOK_RAYS,
+    UPPER,
+    WHITE_PAWN_ATTACKERS,
     WHITE_PIECES,
 )
 
@@ -65,7 +72,7 @@ def castle_moves(board, s, white):
     transit square is deliberately *not* checked -- it may be attacked.
     """
     b = board.squares
-    out = []
+    out = []          # type: list
     home, rook, ks, qs = (60, 'R', 'K', 'Q') if white else (4, 'r', 'k', 'q')
     if s != home:
         return out
@@ -94,7 +101,7 @@ def pseudo_moves(board):
     white = board.white_to_move
     ep = board.ep
     own = WHITE_PIECES if white else BLACK_PIECES
-    moves = []
+    moves = []        # type: list
     append = moves.append
 
     for s, p in enumerate(b):
