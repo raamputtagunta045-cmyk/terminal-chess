@@ -291,3 +291,31 @@ In quiet positions the levels now separate cleanly. In a dense tactical
 position such as kiwipete the top two still converge at depth 5 -- the branching
 factor there is simply too high for another ply inside the budget. That is an
 honest limit of the engine rather than something the labels should hide.
+
+## Final -- Phases 6 to 8
+
+Saved as `bench-final.json`. Compared against the original baseline:
+
+| position | depth | nodes (base) | nodes (final) | change | ebf (base) | ebf (final) |
+|---|---|---|---|---|---|---|
+| startpos | 5 | 81,084 | 7,372 | **-90.9%** | 12.30 | **4.85** |
+| italian | 5 | 474,062 | 31,220 | **-93.4%** | 8.46 | **2.62** |
+| kiwipete | 4 | 48,805 | 22,374 | -54.2% | 4.30 | 2.05 |
+| promotion | 4 | 11,503 | 5,696 | -50.5% | 2.18 | 1.40 |
+| endgame | 6 | 154,538 | 15,698 | **-89.8%** | 5.73 | 4.12 |
+| **TOTAL** | | **769,992** | **82,360** | **-89.3%** | | |
+
+**Wall-clock 14.23s -> 1.50s: 9.50x faster.** Transposition hit rate 18.4%.
+Quiescence is 61.5% of remaining nodes.
+
+### Quality gates
+
+| Gate | Result |
+|---|---|
+| `pytest -q -m "not slow"` | 500 passed, 23 deselected, 47.7s |
+| `pytest -q` (full, incl. perft depth 5) | **523 passed**, 380s |
+| `ruff check .` | clean |
+| `mypy` | clean, 12 source files |
+| Coverage of `termchess/` | **92%** |
+
+perft(5) from the starting position = 4,865,609, unchanged throughout.

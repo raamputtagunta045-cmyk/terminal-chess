@@ -6,21 +6,69 @@ on:
   pull_request:
 
 jobs:
+  # Fast gate: runs on every push and pull request across the supported
+  # interpreters. Deliberately excludes the deep perft runs -- those belong to
+  # the full job below, where a five-minute wait is acceptable.
   test:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.8", "3.10", "3.12", "3.13"]
+        python-version: ["3.9", "3.11", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-
       - run: pip install -r requirements-dev.txt
+      - name: Fast test suite
+        run: python -m pytest -q -m "not slow"
 
-      - name: Run tests
-        run: python -m pytest -q
+  # Lint and types run once. They check the source, not the runtime, so
+  # repeating them per interpreter would only buy duplicate output.
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements-dev.txt
+      - name: Lint
+        run: python -m ruff check .
+      - name: Type check
+        run: python -m mypy
+
+  # The expensive gate: every test including perft to depth 5, plus coverage.
+  # Correctness of move generation is the one thing that must never regress, so
+  # it is worth the minutes.
+  full:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements-dev.txt
+      - name: Full test suite including deep perft
+        run: python -m coverage run -m pytest -q
+      - name: Coverage
+        run: |
+          python -m coverage report --show-missing --include="termchess/*"
+          python -m coverage report --fail-under=80 --include="termchess/*"
+
+  # A game that cannot be played is not a working game, whatever the tests say.
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Play a move from a pipe
+        run: printf 'w\n1\ne4\nquit\n' | python chess_game.py
+      - name: Analyse a position
+        run: python chess_game.py --analyze "6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1"
+      - name: Benchmark (quick)
+        run: python -m termchess.bench --quick
