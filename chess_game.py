@@ -463,6 +463,13 @@ class Engine:
         self.blunder = blunder          # centipawn slack for weaker play
         self.nodes = 0
         self.deadline = 0.0
+        # Instrumentation. These counters only observe the search, never steer
+        # it, so they cannot change which move is chosen or how many nodes are
+        # visited -- the benchmark relies on that.
+        self.qnodes = 0                 # nodes spent inside quiescence
+        self.evals = 0                  # static evaluations performed
+        self.cutoffs = 0                # beta cutoffs taken
+        self.depth_stats = []           # per-iteration (depth, nodes, secs, score)
 
     def _tick(self):
         self.nodes += 1
@@ -488,9 +495,12 @@ class Engine:
 
     def quiesce(self, board, alpha, beta):
         self._tick()
+        self.qnodes += 1
         sign = 1 if board.white_to_move else -1
+        self.evals += 1
         stand = sign * evaluate(board)
         if stand >= beta:
+            self.cutoffs += 1
             return beta
         alpha = max(alpha, stand)
 
@@ -509,6 +519,7 @@ class Engine:
                 # board either way or the caller inherits a corrupt position.
                 board.unmake(undo)
             if score >= beta:
+                self.cutoffs += 1
                 return beta
             alpha = max(alpha, score)
         return alpha
@@ -533,6 +544,7 @@ class Engine:
             finally:
                 board.unmake(undo)
             if score >= beta:
+                self.cutoffs += 1
                 return beta
             alpha = max(alpha, score)
         return alpha
@@ -540,6 +552,9 @@ class Engine:
     def choose(self, board):
         """Iterative deepening; returns (move, score, depth_reached)."""
         self.nodes = 0
+        self.qnodes = self.evals = self.cutoffs = 0
+        self.depth_stats = []
+        started = time.time()
         self.deadline = time.time() + self.time_limit
         root = board.legal_moves()
         if not root:
@@ -564,6 +579,10 @@ class Engine:
                 results.sort(key=lambda x: x[1], reverse=True)
                 scored = results
                 best, best_score, reached = results[0][0], results[0][1], depth
+                # Cumulative, not per-iteration: the benchmark differences
+                # consecutive entries to estimate the branching factor.
+                self.depth_stats.append(
+                    (depth, self.nodes, time.time() - started, best_score))
                 if abs(best_score) > MATE - 100:
                     break
             except TimeUp:
