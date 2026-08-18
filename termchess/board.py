@@ -9,6 +9,7 @@ operates on a position that never existed.
 from . import movegen
 from .constants import (
     CASTLE_LOSS_BY_PIECE, CORNER_RIGHT, HEAVY_VALUE, IS_PRQ, START,
+    ZOBRIST_CASTLING, ZOBRIST_EP_FILE, ZOBRIST_PIECE, ZOBRIST_SIDE,
     square_index, square_name,
 )
 
@@ -60,6 +61,25 @@ class Board:
             self.heavy += HEAVY_VALUE[p]
             if IS_PRQ[p]:
                 self.prq += 1
+        self.hash = self.compute_hash()
+
+    def compute_hash(self):
+        """Zobrist key computed from scratch.
+
+        make()/unmake() maintain self.hash incrementally; this is the
+        independent definition they are checked against.
+        """
+        h = 0
+        for s, p in enumerate(self.squares):
+            if p != '.':
+                h ^= ZOBRIST_PIECE[p][s]
+        for right in self.castling:
+            h ^= ZOBRIST_CASTLING[right]
+        if self.ep is not None:
+            h ^= ZOBRIST_EP_FILE[self.ep & 7]
+        if not self.white_to_move:
+            h ^= ZOBRIST_SIDE
+        return h
 
     # -- queries ---------------------------------------------------------
 
@@ -107,7 +127,18 @@ class Board:
         # allocation on every make(), and the large majority of moves do not
         # touch castling rights at all.
         undo = (frm, to, promo, captured, cap_sq, self.castling,
-                self.ep, self.halfmove, self.fullmove, None)
+                self.ep, self.halfmove, self.fullmove, None, self.hash)
+
+        # Zobrist update. XOR out what stops being true, XOR in what starts
+        # being true. The piece leaving its square and arriving at another are
+        # separate terms, which is why a move is a handful of XORs rather than
+        # a rescan of the board.
+        h = self.hash ^ ZOBRIST_SIDE
+        if self.ep is not None:
+            h ^= ZOBRIST_EP_FILE[self.ep & 7]
+        h ^= ZOBRIST_PIECE[piece][frm]
+        if captured != '.':
+            h ^= ZOBRIST_PIECE[captured][cap_sq]
 
         # Incremental material bookkeeping. A captured king is possible in the
         # pseudo-legal move list (the position is then illegal and the move is
@@ -123,6 +154,7 @@ class Board:
         b[to] = promo.upper() if promo and white else (
             promo.lower() if promo else piece)
         b[frm] = '.'
+        h ^= ZOBRIST_PIECE[b[to]][to]
 
         if promo:
             # A pawn (counted in prq) becomes something else; the piece count
@@ -143,11 +175,14 @@ class Board:
                 rf, rt = frm - 4, frm - 1
             b[rt] = b[rf]
             b[rf] = '.'
+            h ^= ZOBRIST_PIECE[b[rt]][rf] ^ ZOBRIST_PIECE[b[rt]][rt]
             rook_move = (rf, rt)
-            undo = undo[:9] + (rook_move,)
+            undo = undo[:9] + (rook_move, undo[10])
 
         self.ep = ((frm + to) // 2
                    if piece in 'Pp' and abs(to - frm) == 16 else None)
+        if self.ep is not None:
+            h ^= ZOBRIST_EP_FILE[self.ep & 7]
 
         rights = self.castling
         if rights:
@@ -162,17 +197,22 @@ class Board:
                     lost.add(from_corner)
                 if to_corner:
                     lost.add(to_corner)
-                if lost & rights:
-                    self.castling = rights - lost
+                actually_lost = lost & rights
+                if actually_lost:
+                    self.castling = rights - actually_lost
+                    for right in actually_lost:
+                        h ^= ZOBRIST_CASTLING[right]
 
         self.halfmove = 0 if (piece in 'Pp' or captured != '.') else self.halfmove + 1
         if not white:
             self.fullmove += 1
         self.white_to_move = not self.white_to_move
+        self.hash = h
         return undo
 
     def unmake(self, undo):
-        frm, to, promo, captured, cap_sq, castling, ep, hm, fm, rook = undo
+        (frm, to, promo, captured, cap_sq, castling, ep, hm, fm, rook,
+         prev_hash) = undo
         b = self.squares
         piece = b[to]
         if promo:
@@ -206,6 +246,7 @@ class Board:
         self.halfmove = hm
         self.fullmove = fm
         self.white_to_move = not self.white_to_move
+        self.hash = prev_hash
 
     # -- serialisation ---------------------------------------------------
 

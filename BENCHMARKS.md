@@ -129,3 +129,47 @@ The next large win is not in these functions individually but in `legal_moves()`
 calling make/unmake once per pseudo-legal move to test legality. Replacing that
 with pin detection is a correctness-sensitive redesign, so it is deliberately
 not attempted here.
+
+## Phase 3 -- Zobrist hashing and transposition table
+
+The other axis: fewer nodes to reach the same depth. Saved as
+`bench-phase3.json`. Compared against the original baseline:
+
+| position | depth | nodes (base) | nodes (now) | nodes | ebf (base) | ebf (now) | speed |
+|---|---|---|---|---|---|---|---|
+| startpos | 5 | 81,084 | 35,745 | **-55.9%** | 12.30 | 11.05 | +85.9% |
+| italian | 5 | 474,062 | 178,147 | **-62.4%** | 8.46 | 4.75 | +85.6% |
+| kiwipete | 4 | 48,805 | 41,089 | **-15.8%** | 4.30 | 3.57 | +82.5% |
+| promotion | 4 | 11,503 | 10,189 | **-11.4%** | 2.18 | 1.76 | +98.4% |
+| endgame | 6 | 154,538 | 56,329 | **-63.6%** | 5.73 | 6.60 | +89.4% |
+| **TOTAL** | | **769,992** | **321,499** | **-58.2%** | | | |
+
+Best move unchanged in every position. Transposition table hit rate: **10.7%**.
+
+**Cumulative: benchmark wall-clock 14.23s -> 3.30s, a 4.31x speedup.**
+
+### Measured step by step
+
+Each change was benchmarked on its own, which is the only way to know what
+actually paid:
+
+| Step | Nodes | Speed | Note |
+|---|---|---|---|
+| Zobrist hash, maintained incrementally | +0.0% | -4% to -9% | pure overhead until something uses it |
+| Fail-hard -> fail-soft | **+0.0%** | ~0% | see below |
+| Transposition table | **-58.3%** | -12% NPS, but wall-clock 7.03s -> 3.56s | |
+| Repetition detection in search | +0.06% | ~0% | correctness, not speed |
+
+The fail-soft conversion changed **no node counts at all**, which is worth
+explaining rather than just recording. When a child fails high it was searched
+with window `(-beta_parent, -alpha_parent)`, so its return value is at least
+`-alpha_parent`; negated at the parent that is at most `alpha_parent`. Fail-hard
+returns exactly `alpha_parent`, fail-soft returns something less. Neither is
+greater than alpha, so neither updates alpha and neither causes a cutoff -- the
+pruning decisions are identical by construction. What changes is the *quality of
+the information*: fail-soft returns a real bound instead of a restated window
+edge, which is precisely what makes a transposition entry worth storing.
+
+NPS falls from 109,601 to 97,519 because hashing and table probing are real work
+per node. That is the right trade: the search visits 58% fewer nodes, so total
+time still drops by more than half.

@@ -9,6 +9,8 @@ Uppercase = white, lowercase = black, '.' = empty. Rank 8 comes first so the
 list lines up with FEN placement order.
 """
 
+import random as _random
+
 START = ("rnbqkbnr"
          "pppppppp"
          "........"
@@ -172,3 +174,33 @@ CHAR_VALUE['.'] = 0
 # allocation on every one of ~145,000 make() calls per search.
 CASTLE_LOSS_BY_PIECE = {'K': frozenset('KQ'), 'k': frozenset('kq')}
 CORNER_RIGHT = {63: 'K', 56: 'Q', 7: 'k', 0: 'q'}
+
+
+# --------------------------------------------------------------------------
+# Zobrist hashing
+#
+# Each (piece, square) pair, each castling right, each en-passant file and the
+# side to move gets a random 64-bit number. A position's hash is the XOR of the
+# numbers for everything true about it. Because XOR is its own inverse, moving a
+# piece is two XORs rather than a rescan of the board -- which is what makes a
+# transposition table affordable.
+#
+# The generator is seeded, so hashes are identical across runs and machines.
+# That keeps the transposition table deterministic and lets tests assert on
+# concrete hash behaviour rather than only on self-consistency.
+# --------------------------------------------------------------------------
+
+def _zobrist_tables(seed=0x9E3779B97F4A7C15):
+    rng = _random.Random(seed)
+
+    def rand():
+        return rng.getrandbits(64)
+
+    pieces = {c: tuple(rand() for _ in range(64)) for c in ALL_PIECES}
+    castling = {r: rand() for r in 'KQkq'}
+    ep_file = tuple(rand() for _ in range(8))
+    side = rand()
+    return pieces, castling, ep_file, side
+
+
+ZOBRIST_PIECE, ZOBRIST_CASTLING, ZOBRIST_EP_FILE, ZOBRIST_SIDE = _zobrist_tables()
